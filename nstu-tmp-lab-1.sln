@@ -9,6 +9,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Core", "Core", "{FEFF6F4D-E
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Interfaces", "Core\Interfaces\Interfaces.csproj", "{DB43B4F5-C005-4ECB-A752-B7F5F8E4971C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Models", "Core\Models\Models.csproj", "{CFA95EEF-65E0-4CC2-8090-0CFD88F8E35E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,8 +28,13 @@ Global
 		{DB43B4F5-C005-4ECB-A752-B7F5F8E4971C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DB43B4F5-C005-4ECB-A752-B7F5F8E4971C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DB43B4F5-C005-4ECB-A752-B7F5F8E4971C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CFA95EEF-65E0-4CC2-8090-0CFD88F8E35E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CFA95EEF-65E0-4CC2-8090-0CFD88F8E35E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CFA95EEF-65E0-4CC2-8090-0CFD88F8E35E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CFA95EEF-65E0-4CC2-8090-0CFD88F8E35E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{DB43B4F5-C005-4ECB-A752-B7F5F8E4971C} = {FEFF6F4D-EF5F-4B95-9EBE-5C0BD7D96B5D}
+		{CFA95EEF-65E0-4CC2-8090-0CFD88F8E35E} = {FEFF6F4D-EF5F-4B95-9EBE-5C0BD7D96B5D}
 	EndGlobalSection
 EndGlobal
