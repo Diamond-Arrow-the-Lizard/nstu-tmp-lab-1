@@ -12,52 +12,36 @@ public class VirtualMemoryManager<T>
     private readonly int elementsPerPage;
     private readonly List<IPage<T>> bufferPages;
     private readonly int bufferSize = 3; // минимум 3 страницы в памяти
-    private readonly int elementSize; // Размер одного элемента в байтах (для строковых типов)
+    private readonly int elementSize; // размер одного элемента в байтах (берётся из сериализатора)
+    private readonly ISerializer<T> serializer;
 
-    // Для строковых типов elementSize должен быть > 0, для остальных можно не передавать
-    public VirtualMemoryManager(string fileName, long totalElements, int elementsPerPage, int elementSize = 0)
+    // Конструктор принимает экземпляр сериализатора, который инкапсулирует всю логику преобразования T в байты и обратно.
+    public VirtualMemoryManager(string fileName, long totalElements, int elementsPerPage, ISerializer<T> serializer)
     {
         this.fileName = fileName;
         this.elementsPerPage = elementsPerPage;
-        this.bufferPages = new List<IPage<T>>(bufferSize);
+        this.serializer = serializer;
+        this.elementSize = serializer.Size;
+        bufferPages = new List<IPage<T>>(bufferSize);
 
-        // Если T равен string, то требуется передать элементный размер (например, для char фиксированная длина * 2, для varchar – maxLength*2+4)
-        if (typeof(T) == typeof(string))
-        {
-            if (elementSize <= 0)
-                throw new ArgumentException("Для строкового типа необходимо указать размер элемента (elementSize > 0).");
-            this.elementSize = elementSize;
-        }
-        else
-        {
-            // Для остальных типов можно вычислить размер через Marshal.SizeOf
-            this.elementSize = Marshal.SizeOf(typeof(T));
-        }
-
-        // Если файла не существует, создаём его, иначе открываем
         if (!File.Exists(fileName))
         {
             CreateSwapFile(totalElements);
         }
         fs = new FileStream(fileName, FileMode.Open, FileAccess.ReadWrite);
-
-        // Загрузка начальных страниц в буфер (минимум 3)
         LoadInitialPages();
     }
 
-    // Метод создания файла подкачки
+    // Создание файла подкачки с вычисленным общим объёмом (с учётом размера элемента)
     private void CreateSwapFile(long totalElements)
     {
-        // Вычисляем общий объём в байтах:
         long totalBytes = totalElements * elementSize;
         int pagesCount = (int)((totalBytes + pageSize - 1) / pageSize);
 
         using FileStream fCreate = new(fileName, FileMode.CreateNew, FileAccess.ReadWrite);
-        // Записываем сигнатуру "ВМ" (например, 'V', 'M')
         byte[] signature = new byte[] { (byte)'V', (byte)'M' };
         fCreate.Write(signature, 0, signature.Length);
 
-        // Заполняем файл пустыми страницами (нулями)
         byte[] emptyPage = new byte[pageSize];
         for (int i = 0; i < pagesCount; i++)
         {
@@ -65,7 +49,7 @@ public class VirtualMemoryManager<T>
         }
     }
 
-    // Метод загрузки начальных страниц в буфер
+    // Инициализация буфера страниц
     private void LoadInitialPages()
     {
         for (int i = 0; i < bufferSize; i++)
@@ -74,7 +58,7 @@ public class VirtualMemoryManager<T>
         }
     }
 
-    // Метод получения номера страницы в буфере, содержащей элемент с индексом 'index'
+    // Определение страницы в буфере для данного индекса
     private int GetBufferPageIndex(long index)
     {
         int pageNumber = (int)(index / elementsPerPage);
@@ -89,7 +73,7 @@ public class VirtualMemoryManager<T>
         return SwapPage(pageNumber);
     }
 
-    // Метод замещения страницы (выбирается самая старая)
+    // Замещение страницы – выбирается самая старая
     private int SwapPage(int requiredPageNumber)
     {
         int oldestIndex = 0;
@@ -112,7 +96,7 @@ public class VirtualMemoryManager<T>
         return oldestIndex;
     }
 
-    // Метод чтения страницы из файла с десериализацией
+    // Унифицированная десериализация страницы с использованием ISerializer<T>
     private IPage<T> ReadPageFromFile(int pageNumber)
     {
         IPage<T> page = new Page<T>(elementsPerPage)
@@ -120,7 +104,6 @@ public class VirtualMemoryManager<T>
             AbsolutePageNumber = pageNumber
         };
 
-        // Смещение с учётом 2 байт сигнатуры
         long offset = 2 + pageNumber * pageSize;
         fs.Seek(offset, SeekOrigin.Begin);
 
@@ -130,88 +113,41 @@ public class VirtualMemoryManager<T>
             byte[] bitMapBytes = br.ReadBytes(bitMapLength);
             page.BitMap = new BitArray(bitMapBytes);
 
-            // Пример десериализации для int. Для string необходимо реализовать соответствующую логику.
             for (int i = 0; i < elementsPerPage; i++)
             {
-                if (typeof(T) == typeof(int))
-                {
-                    int value = br.ReadInt32();
-                    page.Data[i] = (T)(object)value;
-                }
-                else if (typeof(T) == typeof(string))
-                {
-                    // Для строк предполагаем, что записано сначала 4 байта длины, затем сами символы в формате Unicode
-                    int len = br.ReadInt32();
-                    // Ограничиваем длину, чтобы не выйти за пределы elementSize
-                    int maxBytes = elementSize - 4;
-                    int bytesToRead = Math.Min(len * 2, maxBytes);
-                    byte[] stringBytes = br.ReadBytes(bytesToRead);
-                    string strValue = System.Text.Encoding.Unicode.GetString(stringBytes);
-                    page.Data[i] = (T)(object)strValue;
-                }
-                else
-                {
-                    throw new NotSupportedException($"Десериализация для типа {typeof(T)} не реализована.");
-                }
+                byte[] buffer = br.ReadBytes(elementSize);
+                page.Data[i] = serializer.Deserialize(buffer);
             }
         }
         return page;
     }
 
-    // Метод записи страницы в файл
+    // Унифицированная сериализация страницы с использованием ISerializer<T>
     private void WritePageToFile(IPage<T> page)
     {
         long offset = 2 + page.AbsolutePageNumber * pageSize;
         fs.Seek(offset, SeekOrigin.Begin);
         byte[] pageData = new byte[pageSize];
 
-        // Пример сериализации для int. Для string необходимо реализовать свою логику.
-        if (typeof(T) == typeof(int))
-        {
-            // Запишем битовую карту
-            int bitMapLength = (elementsPerPage + 7) / 8;
-            byte[] bitMapBytes = new byte[bitMapLength];
-            page.BitMap.CopyTo(bitMapBytes, 0);
-            Array.Copy(bitMapBytes, 0, pageData, 0, bitMapLength);
+        int bitMapLength = (elementsPerPage + 7) / 8;
+        byte[] bitMapBytes = new byte[bitMapLength];
+        page.BitMap.CopyTo(bitMapBytes, 0);
+        Array.Copy(bitMapBytes, 0, pageData, 0, bitMapLength);
 
-            // Запишем данные
-            for (int i = 0; i < elementsPerPage; i++)
-            {
-                byte[] intBytes = BitConverter.GetBytes((int)(object)page.Data[i]!);
-                Array.Copy(intBytes, 0, pageData, bitMapLength + i * 4, 4);
-            }
-        }
-        else if (typeof(T) == typeof(string))
+        for (int i = 0; i < elementsPerPage; i++)
         {
-            int bitMapLength = (elementsPerPage + 7) / 8;
-            byte[] bitMapBytes = new byte[bitMapLength];
-            page.BitMap.CopyTo(bitMapBytes, 0);
-            Array.Copy(bitMapBytes, 0, pageData, 0, bitMapLength);
-
-            for (int i = 0; i < elementsPerPage; i++)
-            {
-                string str = (string)(object)page.Data[i]!; 
-                byte[] strBytes = System.Text.Encoding.Unicode.GetBytes(str);
-                int len = strBytes.Length / 2;
-                // Запишем 4 байта длины строки
-                byte[] lenBytes = BitConverter.GetBytes(len);
-                Array.Copy(lenBytes, 0, pageData, bitMapLength + i * elementSize, 4);
-                // Запишем строку (ограничиваем количеством байтов)
-                int maxBytes = elementSize - 4;
-                int bytesToWrite = Math.Min(strBytes.Length, maxBytes);
-                Array.Copy(strBytes, 0, pageData, bitMapLength + i * elementSize + 4, bytesToWrite);
-            }
-        }
-        else
-        {
-            throw new NotSupportedException($"Сериализация для типа {typeof(T)} не реализована.");
+            int pos = bitMapLength + i * elementSize;
+            byte[] buffer = new byte[elementSize];
+            // Если значение не инициализировано, использовать пустую строку
+            var value = page.Data[i] ?? (T)(object)string.Empty;
+            serializer.Serialize(value, buffer);
+            Array.Copy(buffer, 0, pageData, pos, elementSize);
         }
 
         fs.Write(pageData, 0, pageSize);
         fs.Flush();
     }
 
-    // Чтение элемента по индексу
     public T ReadElement(long index)
     {
         if (index < 0)
@@ -221,7 +157,6 @@ public class VirtualMemoryManager<T>
         return bufferPages[pageIndex].Data[offsetInPage];
     }
 
-    // Запись элемента по индексу
     public void WriteElement(long index, T value)
     {
         if (index < 0)
@@ -232,9 +167,10 @@ public class VirtualMemoryManager<T>
         bufferPages[pageIndex].Modified = true;
         bufferPages[pageIndex].LastAccessTime = DateTime.Now;
         bufferPages[pageIndex].BitMap.Set(offsetInPage, true);
+
+        WritePageToFile(bufferPages[pageIndex]);
     }
 
-    // Закрытие файлового потока
     public void Close()
     {
         foreach (var page in bufferPages)

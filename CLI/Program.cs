@@ -1,5 +1,6 @@
 ﻿using System;
 using VirtualMemory.Models;
+using VirtualMemory.Interfaces;
 
 public class Program
 {
@@ -7,7 +8,6 @@ public class Program
 
     static void Main(string[] args)
     {
-        Console.WriteLine("VM>");
         object? vmManager = null; // Будет хранить VirtualMemoryManager<T>
 
         while (true)
@@ -95,15 +95,28 @@ public class Program
         string fileName = parts[0];
         string typeInfo = parts[1].ToLower();
 
-        // Используем switch с pattern matching для определения типа данных
         vmManager = typeInfo switch
         {
             string s when s.StartsWith("int") =>
-                new VirtualMemoryManager<int>(fileName, 20000, pageSizeForInt()),
+                new VirtualMemoryManager<int>(
+                    fileName,
+                    20000,
+                    PageElementsForInt(),
+                    new IntSerializer()),
             string s when s.StartsWith("char") =>
-                new VirtualMemoryManager<string>(fileName, 20000, pageSizeForChar(ParseLength(s, "char"))),
+                new VirtualMemoryManager<string>(
+                    fileName,
+                    20000,
+                    PageElementsForChar(ParseLength(s, "char")),
+                    new FixedStringSerializer(ParseLength(s, "char") * 2) // фиксированный размер в байтах: length * 2
+                ),
             string s when s.StartsWith("varchar") =>
-                new VirtualMemoryManager<string>(fileName, 20000, pageSizeForVarchar(ParseLength(s, "varchar"))),
+                new VirtualMemoryManager<string>(
+                    fileName,
+                    20000,
+                    PageElementsForVarchar(ParseLength(s, "varchar")),
+                    new VarcharSerializer(4 + (ParseLength(s, "varchar") * 2)) // 4 байта на длину + символы
+                ),
             _ => null
         };
 
@@ -134,7 +147,6 @@ public class Program
 
         long index = long.Parse(parts[0]);
 
-        // Используем pattern matching для выбора нужной реализации
         switch (vmManager)
         {
             case VirtualMemoryManager<int> vmInt:
@@ -198,27 +210,51 @@ public class Program
         return -1;
     }
 
-    private static int pageSizeForInt()
+    // Вычисление максимального числа элементов для int
+    private static int PageElementsForInt()
     {
-        // Размер int = 4 байта, страница 512 байт минус размер битовой карты.
-        // Предположим, что битовая карта занимает 16 байт – тогда:
-        // Элементы на странице = (512 - 16) / 4 = 124
-        return 124;
+        int n = 0;
+        for (int i = 1; i < 512; i++)
+        {
+            int bitMap = (i + 7) / 8;
+            if (i * 4 + bitMap <= 512)
+                n = i;
+            else
+                break;
+        }
+        return n;
     }
 
-    private static int pageSizeForChar(int fixedLength)
+    // Вычисление числа элементов для фиксированных строк (char)
+    private static int PageElementsForChar(int fixedLength)
     {
-        // Для типа char размер одного символа – 2 байта.
-        // Элементы на странице = (512 - битовая карта) / (fixedLength * 2)
-        // Здесь можно использовать упрощённое значение:
-        return fixedLength > 0 ? 100 : 0; 
+        int elemSize = fixedLength * 2;
+        int n = 0;
+        for (int i = 1; i < 512; i++)
+        {
+            int bitMap = (i + 7) / 8;
+            if (i * elemSize + bitMap <= 512)
+                n = i;
+            else
+                break;
+        }
+        return n;
     }
 
-    private static int pageSizeForVarchar(int maxLength)
+    // Вычисление числа элементов для varchar
+    private static int PageElementsForVarchar(int maxLength)
     {
-        // Для varchar каждый элемент занимает до (maxLength * 2 + 4) байт.
-        // Здесь можно использовать упрощённое значение:
-        return maxLength > 0 ? 80 : 0;
+        int elemSize = 4 + maxLength * 2;
+        int n = 0;
+        for (int i = 1; i < 512; i++)
+        {
+            int bitMap = (i + 7) / 8;
+            if (i * elemSize + bitMap <= 512)
+                n = i;
+            else
+                break;
+        }
+        return n;
     }
 
     private static void ShowHelp()

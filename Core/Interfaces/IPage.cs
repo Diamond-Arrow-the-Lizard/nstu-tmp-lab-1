@@ -2,11 +2,11 @@ namespace VirtualMemory.Interfaces;
 
 using System.Collections;
 
-public interface IPage<T> 
+public interface IPage<T>
 {
-        long AbsolutePageNumber { get; set; }
-        bool Modified { get; set; }
-        DateTime LastAccessTime { get; set; }
-        BitArray BitMap { get; set; }
-        T[] Data { get; set; }
+    long AbsolutePageNumber { get; set; }
+    bool Modified { get; set; }
+    DateTime LastAccessTime { get; set; }
+    BitArray BitMap { get; set; }
+    T[] Data { get; set; }
 }
