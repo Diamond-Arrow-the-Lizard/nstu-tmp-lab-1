@@ -10,23 +10,24 @@ public class PageFileHandler : IFileHandler
     private const string Signature = "VM";
     private FileStream? _fileStream;
     private readonly int _pageSize;
+    private readonly int _elementsPerPage;
     private bool _disposed;
 
-    public PageFileHandler(int pageSize)
+    public PageFileHandler(int pageSize, int elementsPerPage)
     {
         if (pageSize <= 0)
             throw new ArgumentException("Page size must be positive", nameof(pageSize));
+        if (elementsPerPage <= 0)
+            throw new ArgumentException("Elements per page must be positive", nameof(elementsPerPage));
         
         _pageSize = pageSize;
+        _elementsPerPage = elementsPerPage;
     }
 
-    public void CreateOrOpen(string filename, int pageSize)
+    public void CreateOrOpen(string filename)
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(PageFileHandler));
-        
-        if (pageSize != 512)
-            throw new ArgumentException("Page size must be 512 bytes", nameof(pageSize));
 
         bool isNewFile = !File.Exists(filename);
         
@@ -42,17 +43,15 @@ public class PageFileHandler : IFileHandler
 
             if (isNewFile)
             {
-                // Запись сигнатуры
                 var signature = Encoding.ASCII.GetBytes(Signature);
                 _fileStream.Write(signature, 0, signature.Length);
-                _fileStream.SetLength(pageSize);
+                _fileStream.SetLength(_pageSize);
 
-                var zeroBuffer = new byte[pageSize];
+                var zeroBuffer = new byte[_pageSize];
                 _fileStream.Write(zeroBuffer, 0, zeroBuffer.Length);
             }
             else
             {
-                // Проверка сигнатуры
                 var buffer = new byte[2];
                 if (_fileStream.Read(buffer, 0, 2) != 2 || 
                     Encoding.ASCII.GetString(buffer) != Signature)
@@ -82,7 +81,7 @@ public class PageFileHandler : IFileHandler
 
         _fileStream.Seek(offset, SeekOrigin.Begin);
         
-        int bitmapSize = _pageSize / 8;
+        int bitmapSize = (_elementsPerPage + 7) / 8;
         var bitmap = new byte[bitmapSize];
         if (_fileStream.Read(bitmap, 0, bitmapSize) != bitmapSize)
             throw new IOException("Failed to read bitmap");
@@ -105,7 +104,8 @@ public class PageFileHandler : IFileHandler
         if (bitmap == null || data == null)
             throw new ArgumentNullException();
 
-        if (bitmap.Length + data.Length != _pageSize)
+        int expectedBitmapSize = (_elementsPerPage + 7) / 8;
+        if (bitmap.Length != expectedBitmapSize || data.Length != _pageSize - expectedBitmapSize)
             throw new ArgumentException("Invalid page data size");
 
         var offset = 2 + pageNumber * _pageSize;

@@ -16,7 +16,7 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
     private readonly IFileHandler _fileHandler;
     private readonly Dictionary<long, IPage<T>> _pagesInMemory = new();
 
-    public VirtualMemoryManager(int bufferSize, ISerializer<T> serializer, IFileHandler fileHandler, int pageSize = DefaultPageSize)
+    public VirtualMemoryManager(int bufferSize, ISerializer<T> serializer, string filename, int pageSize = DefaultPageSize)
     {
         if (bufferSize <= 0)
             throw new ArgumentOutOfRangeException(nameof(bufferSize), "Buffer size must be positive");
@@ -25,31 +25,34 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         if (pageSize != DefaultPageSize)
             throw new ArgumentException($"Page size must be {DefaultPageSize} bytes", nameof(pageSize));
         ArgumentNullException.ThrowIfNull(serializer);
-        ArgumentNullException.ThrowIfNull(fileHandler);
 
         _pageSize = pageSize;
         _bufferSize = bufferSize;
         _serializer = serializer;
-        _fileHandler = fileHandler;
         _elementsPerPage = CalculateElementsPerPage();
+
+        _fileHandler = new PageFileHandler(pageSize, _elementsPerPage);
+        _fileHandler.CreateOrOpen(filename);
     }
 
     public int BufferSize => _bufferSize;
 
     private int CalculateElementsPerPage()
     {
-        int elementSizeBits = _serializer.Size * 8 + 1; // +1 бит для битовой карты
-        return (_pageSize * 8) / elementSizeBits;
+        int elementSize = _serializer.Size;
+        int bitsPerElement = 1; // 1 бит на элемент в битовой карте
+        int totalBitsPerElement = (elementSize * 8) + bitsPerElement;
+        return (_pageSize * 8) / totalBitsPerElement;
     }
 
     public T ReadElement(long index)
     {
         var (pageNumber, offset) = CalculateIndices(index);
         var page = GetOrLoadPage(pageNumber);
-        
+
         if (!page.IsElementInitialized(offset))
             throw new InvalidOperationException("Element not initialized");
-        
+
         return page.Data[offset];
     }
 
@@ -57,9 +60,15 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
     {
         var (pageNumber, offset) = CalculateIndices(index);
         var page = GetOrLoadPage(pageNumber);
-        
+
         page.Data[offset] = value;
         page.MarkAsModified(offset);
+
+        // Немедленно сохраняем изменения
+        var bitmapBytes = ConvertBitArray(page.BitMap);
+        var dataBytes = SerializeData(page.Data);
+        _fileHandler.WritePage(page.AbsolutePageNumber, bitmapBytes, dataBytes);
+        page.Modified = false;
     }
 
     public void FlushModifiedPages()
@@ -86,7 +95,7 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
     {
         if (index < 0)
             throw new IndexOutOfRangeException("Index cannot be negative");
-        
+
         long pageNumber = index / _elementsPerPage;
         int offset = (int)(index % _elementsPerPage);
         return (pageNumber, offset);
@@ -111,18 +120,6 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         try
         {
             var (bitmapBytes, dataBytes) = _fileHandler.ReadPage(pageNumber);
-
-            if (bitmapBytes.All(b => b == 0))
-            {
-                return new Page<T>(_elementsPerPage)
-                {
-                    AbsolutePageNumber = pageNumber,
-                    BitMap = new BitArray(_elementsPerPage, false),
-                    Data = new T[_elementsPerPage],
-                    LastAccessTime = DateTime.UtcNow
-                };
-            }
-
             var page = new Page<T>(_elementsPerPage)
             {
                 AbsolutePageNumber = pageNumber,
@@ -175,6 +172,9 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
 
     private T[] DeserializeData(byte[] bytes)
     {
+        if (bytes.Length % _serializer.Size != 0)
+            throw new InvalidOperationException("Invalid data length for deserialization.");
+
         T[] result = new T[bytes.Length / _serializer.Size];
         for (int i = 0; i < result.Length; i++)
         {
