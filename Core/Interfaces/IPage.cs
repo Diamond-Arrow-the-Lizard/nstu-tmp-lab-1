@@ -10,7 +10,6 @@ public interface IPage<T>
     BitArray BitMap { get; set; }
     T[] Data { get; set; }
 
-    // Добавленные методы
     void UpdateAccessTime();
     bool IsElementInitialized(int index);
     void MarkAsModified(int index);
