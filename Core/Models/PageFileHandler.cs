@@ -46,6 +46,9 @@ public class PageFileHandler : IFileHandler
                 var signature = Encoding.ASCII.GetBytes(Signature);
                 _fileStream.Write(signature, 0, signature.Length);
                 _fileStream.SetLength(pageSize);
+
+                var zeroBuffer = new byte[pageSize];
+                _fileStream.Write(zeroBuffer, 0, zeroBuffer.Length);
             }
             else
             {

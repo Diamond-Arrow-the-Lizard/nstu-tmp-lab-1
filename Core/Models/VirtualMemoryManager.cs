@@ -20,6 +20,8 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
     {
         if (bufferSize <= 0)
             throw new ArgumentOutOfRangeException(nameof(bufferSize), "Buffer size must be positive");
+        if (bufferSize < 3)
+            throw new ArgumentException("Buffer size must be at least 3 pages", nameof(bufferSize));
         if (pageSize != DefaultPageSize)
             throw new ArgumentException($"Page size must be {DefaultPageSize} bytes", nameof(pageSize));
         ArgumentNullException.ThrowIfNull(serializer);
@@ -109,6 +111,18 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         try
         {
             var (bitmapBytes, dataBytes) = _fileHandler.ReadPage(pageNumber);
+
+            if (bitmapBytes.All(b => b == 0))
+            {
+                return new Page<T>(_elementsPerPage)
+                {
+                    AbsolutePageNumber = pageNumber,
+                    BitMap = new BitArray(_elementsPerPage, false),
+                    Data = new T[_elementsPerPage],
+                    LastAccessTime = DateTime.UtcNow
+                };
+            }
+
             var page = new Page<T>(_elementsPerPage)
             {
                 AbsolutePageNumber = pageNumber,
