@@ -108,7 +108,11 @@ public class PageFileHandler : IFileHandler
         if (bitmap.Length != expectedBitmapSize || data.Length != _pageSize - expectedBitmapSize)
             throw new ArgumentException("Invalid page data size");
 
-        var offset = 2 + pageNumber * _pageSize;
+        var offset = 2 + pageNumber * _pageSize; 
+        if (_fileStream.Length < offset + _pageSize)
+        {
+            _fileStream.SetLength(offset + _pageSize);
+        }
         _fileStream.Seek(offset, SeekOrigin.Begin);
         _fileStream.Write(bitmap, 0, bitmap.Length);
         _fileStream.Write(data, 0, data.Length);

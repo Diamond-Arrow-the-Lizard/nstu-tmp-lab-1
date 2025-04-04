@@ -117,6 +117,8 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
 
     private IPage<T> LoadPage(long pageNumber)
     {
+        Console.WriteLine($"Loading page {pageNumber}");
+
         try
         {
             var (bitmapBytes, dataBytes) = _fileHandler.ReadPage(pageNumber);
@@ -125,6 +127,18 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
                 AbsolutePageNumber = pageNumber,
                 BitMap = new BitArray(bitmapBytes),
                 Data = DeserializeData(dataBytes),
+                LastAccessTime = DateTime.UtcNow
+            };
+            _pagesInMemory[pageNumber] = page;
+            return page;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            var page = new Page<T>(_elementsPerPage)
+            {
+                AbsolutePageNumber = pageNumber,
+                BitMap = new BitArray(_elementsPerPage, false),
+                Data = new T[_elementsPerPage],
                 LastAccessTime = DateTime.UtcNow
             };
             _pagesInMemory[pageNumber] = page;
@@ -141,6 +155,8 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         var pageToEvict = _pagesInMemory.Values
             .OrderBy(p => p.LastAccessTime)
             .First();
+
+        Console.WriteLine($"Evicting page {pageToEvict.AbsolutePageNumber}, last access: {pageToEvict.LastAccessTime}");
 
         if (pageToEvict.Modified)
         {
