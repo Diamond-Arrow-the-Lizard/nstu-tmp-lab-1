@@ -12,17 +12,15 @@ public class Page<T> : IPage<T>
     public BitArray BitMap { get; set; }
     public T[] Data { get; set; }
 
-    public Page(int pageSize)
+    public Page(int elementsPerPage)
     {
-        BitMap = new BitArray(pageSize);
-        Data = new T[pageSize];
+        BitMap = new BitArray(elementsPerPage);
+        Data = new T[elementsPerPage];
         LastAccessTime = DateTime.Now;
+        Modified = false;
     }
 
-    public void UpdateAccessTime()
-    {
-        LastAccessTime = DateTime.Now;
-    }
+    public void UpdateAccessTime() => LastAccessTime = DateTime.Now;
 
     public bool IsElementInitialized(int index)
     {
@@ -37,5 +35,6 @@ public class Page<T> : IPage<T>
             throw new ArgumentOutOfRangeException(nameof(index));
         BitMap[index] = true;
         Modified = true;
+        UpdateAccessTime();
     }
 }
