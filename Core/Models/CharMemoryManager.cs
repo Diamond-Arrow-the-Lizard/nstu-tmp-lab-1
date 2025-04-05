@@ -13,7 +13,7 @@ public class CharMemoryManager : IVirtualMemoryManager<string>
     private readonly int _pageSize;
     private readonly int _bufferSize;
     private readonly int _elementsPerPage;
-    private readonly int _stringLength;
+    private readonly ISerializer<string> _serializer;
     private readonly IFileHandler _fileHandler;
     private readonly Dictionary<long, IPage<string>> _pagesInMemory = new();
 
@@ -25,12 +25,10 @@ public class CharMemoryManager : IVirtualMemoryManager<string>
             throw new ArgumentException("Buffer size must be at least 3 pages", nameof(bufferSize));
         if (pageSize != DefaultPageSize)
             throw new ArgumentException($"Page size must be {DefaultPageSize} bytes", nameof(pageSize));
-        if (stringLength <= 0)
-            throw new ArgumentException("String length must be positive", nameof(stringLength));
 
         _pageSize = pageSize;
         _bufferSize = bufferSize;
-        _stringLength = stringLength;
+        _serializer = new FixedStringSerializer(stringLength, Encoding.ASCII);
         _elementsPerPage = CalculateElementsPerPage();
 
         _fileHandler = new PageFileHandler(pageSize, _elementsPerPage);
@@ -41,7 +39,7 @@ public class CharMemoryManager : IVirtualMemoryManager<string>
 
     private int CalculateElementsPerPage()
     {
-        int elementSize = _stringLength; // Размер строки в байтах (ASCII)
+        int elementSize = _serializer.Size;
         int bitsPerElement = 1; // 1 бит на элемент в битовой карте
         int totalBitsPerElement = (elementSize * 8) + bitsPerElement;
         return (_pageSize * 8) / totalBitsPerElement;
@@ -60,16 +58,11 @@ public class CharMemoryManager : IVirtualMemoryManager<string>
 
     public void WriteElement(long index, string value)
     {
-        if (value.Length > _stringLength)
-            throw new ArgumentException($"String exceeds maximum length of {_stringLength}");
-
         var (pageNumber, offset) = CalculateIndices(index);
         var page = GetOrLoadPage(pageNumber);
 
-        page.Data[offset] = value.PadRight(_stringLength, '\0');
+        page.Data[offset] = value;
         page.MarkAsModified(offset);
-
-        FlushModifiedPages();
     }
 
     public void FlushModifiedPages()
@@ -170,25 +163,25 @@ public class CharMemoryManager : IVirtualMemoryManager<string>
 
     private byte[] SerializeData(string[] data)
     {
-        var buffer = new byte[data.Length * _stringLength];
+        var buffer = new byte[data.Length * _serializer.Size];
         for (int i = 0; i < data.Length; i++)
         {
-            var strBytes = Encoding.ASCII.GetBytes(data[i] ?? string.Empty);
-            Array.Copy(strBytes, 0, buffer, i * _stringLength, Math.Min(strBytes.Length, _stringLength));
+            var span = new Span<byte>(buffer, i * _serializer.Size, _serializer.Size);
+            _serializer.Serialize(data[i] ?? string.Empty, span);
         }
         return buffer;
     }
 
     private string[] DeserializeData(byte[] bytes)
     {
-        if (bytes.Length % _stringLength != 0)
+        if (bytes.Length % _serializer.Size != 0)
             throw new InvalidOperationException("Invalid data length for deserialization.");
 
-        string[] result = new string[bytes.Length / _stringLength];
+        string[] result = new string[bytes.Length / _serializer.Size];
         for (int i = 0; i < result.Length; i++)
         {
-            var span = new ReadOnlySpan<byte>(bytes, i * _stringLength, _stringLength);
-            result[i] = Encoding.ASCII.GetString(span).TrimEnd('\0');
+            var span = new ReadOnlySpan<byte>(bytes, i * _serializer.Size, _serializer.Size);
+            result[i] = _serializer.Deserialize(span);
         }
         return result;
     }
