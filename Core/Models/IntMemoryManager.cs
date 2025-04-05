@@ -6,17 +6,17 @@ using System.Collections.Generic;
 using System.Linq;
 using VirtualMemory.Interfaces;
 
-public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
+public class IntMemoryManager: IVirtualMemoryManager<int>
 {
     private const int DefaultPageSize = 512;
     private readonly int _pageSize;
     private readonly int _bufferSize;
     private readonly int _elementsPerPage;
-    private readonly ISerializer<T> _serializer;
+    private readonly ISerializer<int> _serializer;
     private readonly IFileHandler _fileHandler;
-    private readonly Dictionary<long, IPage<T>> _pagesInMemory = new();
+    private readonly Dictionary<long, IPage<int>> _pagesInMemory = new();
 
-    public VirtualMemoryManager(int bufferSize, ISerializer<T> serializer, string filename, int pageSize = DefaultPageSize)
+    public IntMemoryManager(int bufferSize, ISerializer<int> serializer, string filename, int pageSize = DefaultPageSize)
     {
         if (bufferSize <= 0)
             throw new ArgumentOutOfRangeException(nameof(bufferSize), "Buffer size must be positive");
@@ -45,7 +45,7 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         return (_pageSize * 8) / totalBitsPerElement;
     }
 
-    public T ReadElement(long index)
+    public int ReadElement(long index)
     {
         var (pageNumber, offset) = CalculateIndices(index);
         var page = GetOrLoadPage(pageNumber);
@@ -56,7 +56,7 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         return page.Data[offset];
     }
 
-    public void WriteElement(long index, T value)
+    public void WriteElement(long index, int value)
     {
         var (pageNumber, offset) = CalculateIndices(index);
         var page = GetOrLoadPage(pageNumber);
@@ -101,7 +101,7 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         return (pageNumber, offset);
     }
 
-    private IPage<T> GetOrLoadPage(long pageNumber)
+    private IPage<int> GetOrLoadPage(long pageNumber)
     {
         if (_pagesInMemory.TryGetValue(pageNumber, out var page))
         {
@@ -115,14 +115,14 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         return LoadPage(pageNumber);
     }
 
-    private IPage<T> LoadPage(long pageNumber)
+    private IPage<int> LoadPage(long pageNumber)
     {
         Console.WriteLine($"Loading page {pageNumber}");
 
         try
         {
             var (bitmapBytes, dataBytes) = _fileHandler.ReadPage(pageNumber);
-            var page = new Page<T>(_elementsPerPage)
+            var page = new Page<int>(_elementsPerPage)
             {
                 AbsolutePageNumber = pageNumber,
                 BitMap = new BitArray(bitmapBytes),
@@ -134,11 +134,11 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         }
         catch (ArgumentOutOfRangeException)
         {
-            var page = new Page<T>(_elementsPerPage)
+            var page = new Page<int>(_elementsPerPage)
             {
                 AbsolutePageNumber = pageNumber,
                 BitMap = new BitArray(_elementsPerPage, false),
-                Data = new T[_elementsPerPage],
+                Data = new int[_elementsPerPage],
                 LastAccessTime = DateTime.UtcNow
             };
             _pagesInMemory[pageNumber] = page;
@@ -175,7 +175,7 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         return bytes;
     }
 
-    private byte[] SerializeData(T[] data)
+    private byte[] SerializeData(int[] data)
     {
         var buffer = new byte[data.Length * _serializer.Size];
         for (int i = 0; i < data.Length; i++)
@@ -186,12 +186,12 @@ public class VirtualMemoryManager<T> : IVirtualMemoryManager<T>
         return buffer;
     }
 
-    private T[] DeserializeData(byte[] bytes)
+    private int[] DeserializeData(byte[] bytes)
     {
         if (bytes.Length % _serializer.Size != 0)
             throw new InvalidOperationException("Invalid data length for deserialization.");
 
-        T[] result = new T[bytes.Length / _serializer.Size];
+        int[] result = new int[bytes.Length / _serializer.Size];
         for (int i = 0; i < result.Length; i++)
         {
             var span = new ReadOnlySpan<byte>(bytes, i * _serializer.Size, _serializer.Size);

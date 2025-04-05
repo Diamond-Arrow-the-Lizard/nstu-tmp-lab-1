@@ -6,7 +6,7 @@ namespace VirtualMemory.CLI
 {
     public static class Program
     {
-        private static IVirtualMemoryManager<int>? _vmManager;
+        private static IVirtualMemoryManager<int>? _intManager;
         private static bool _isRunning = true;
 
         public static void Main()
@@ -53,7 +53,7 @@ namespace VirtualMemory.CLI
                 
                 case "exit":
                     _isRunning = false;
-                    _vmManager?.Dispose();
+                    _intManager?.Dispose();
                     Console.WriteLine("Exiting...");
                     break;
                 
@@ -74,7 +74,7 @@ namespace VirtualMemory.CLI
 
             var filename = parts[1];
 
-            _vmManager = new VirtualMemoryManager<int>(
+            _intManager = new IntMemoryManager(
                 bufferSize: 3,
                 serializer: new IntSerializer(),
                 filename: filename
@@ -85,7 +85,7 @@ namespace VirtualMemory.CLI
 
         private static void HandleInputCommand(string[] parts)
         {
-            if (_vmManager == null)
+            if (_intManager == null)
                 throw new InvalidOperationException("No virtual memory file opened. Use 'create' first.");
 
             if (parts.Length < 3)
@@ -97,14 +97,14 @@ namespace VirtualMemory.CLI
             if (!int.TryParse(parts[2], out int value))
                 throw new ArgumentException("Value must be an integer.");
 
-            _vmManager.WriteElement(index, value);
-            _vmManager.FlushModifiedPages(); // Принудительно сохраняем изменения на диск
+            _intManager.WriteElement(index, value);
+            _intManager.FlushModifiedPages(); // Принудительно сохраняем изменения на диск
             Console.WriteLine($"Written value {value} at index {index}.");
         }
 
         private static void HandlePrintCommand(string[] parts)
         {
-            if (_vmManager == null)
+            if (_intManager == null)
                 throw new InvalidOperationException("No virtual memory file opened. Use 'create' first.");
             
             if (parts.Length < 2)
@@ -113,7 +113,7 @@ namespace VirtualMemory.CLI
             if (!long.TryParse(parts[1], out long index))
                 throw new ArgumentException("Index must be a number.");
             
-            var value = _vmManager.ReadElement(index);
+            var value = _intManager.ReadElement(index);
             Console.WriteLine($"Value at index {index}: {value}");
         }
 
