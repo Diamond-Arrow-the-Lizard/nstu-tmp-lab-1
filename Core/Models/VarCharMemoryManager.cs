@@ -1,3 +1,5 @@
+namespace VirtualMemory.Models;
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -5,12 +7,10 @@ using System.IO;
 using System.Linq;
 using VirtualMemory.Interfaces;
 
-namespace VirtualMemory.Models;
-
 public class VarCharMemoryManager : IVirtualMemoryManager<string>
 {
     private const int DefaultPageSize = 512;
-    private const int AddressesPerPage = 128; 
+    private const int AddressesPerPage = 128; // Количество адресов на странице
     private readonly int _pageSize = DefaultPageSize;
     private readonly int _bufferSize;
     private readonly ISerializer<long> _addressSerializer = new VarCharSerializer();
@@ -19,7 +19,7 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
     private readonly Dictionary<long, IPage<long>> _pagesInMemory = new();
     private readonly string _pageFileName;
     private readonly string _stringFileName;
-    private long _maxStringLength;
+    private readonly long _maxStringLength;
 
     public VarCharMemoryManager(int bufferSize, string pageFileName, string stringFileName, long maxStringLength)
     {
@@ -33,51 +33,94 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         _stringFileName = stringFileName;
         _maxStringLength = maxStringLength;
 
-        _pageFileHandler = new PageFileHandler(_pageSize, AddressesPerPage);
-        _pageFileHandler.CreateOrOpen(_pageFileName);
-        _stringFileHandler.CreateOrOpen(_stringFileName);
+        try
+        {
+            _pageFileHandler = new PageFileHandler(_pageSize, AddressesPerPage);
+            _pageFileHandler.CreateOrOpen(_pageFileName);
+            InitializeFile(_pageFileHandler, _pageSize, AddressesPerPage); // Заполняем нулями
+
+            _stringFileHandler.CreateOrOpen(_stringFileName);
+        }
+        catch (IOException ex)
+        {
+            throw new IOException("Error during file operations", ex);
+        }
+        catch (OutOfMemoryException ex)
+        {
+            throw new OutOfMemoryException("Insufficient memory to create object", ex);
+        }
     }
 
     public int BufferSize => _bufferSize;
 
     public string ReadElement(long index)
     {
-        var (pageNumber, offset) = CalculateIndices(index);
-        var page = GetOrLoadPage(pageNumber);
+        if (index < 0)
+            throw new IndexOutOfRangeException("Index cannot be negative");
 
-        if (!page.IsElementInitialized(offset))
-            throw new InvalidOperationException("Element not initialized");
+        try
+        {
+            var (pageNumber, offset) = CalculateIndices(index);
+            var page = GetOrLoadPage(pageNumber);
 
-        long stringOffset = page.Data[offset];
-        return _stringFileHandler.ReadString(stringOffset).value;
+            if (!page.IsElementInitialized(offset))
+                throw new InvalidOperationException("Element not initialized");
+
+            long stringOffset = page.Data[offset];
+            return _stringFileHandler.ReadString(stringOffset).value;
+        }
+        catch (IOException ex)
+        {
+            throw new IOException("Error reading element", ex);
+        }
     }
 
     public void WriteElement(long index, string value)
     {
+        if (index < 0)
+            throw new IndexOutOfRangeException("Index cannot be negative");
         if (value.Length > _maxStringLength)
             throw new ArgumentException($"String length exceeds maximum allowed length ({_maxStringLength})");
 
-        var (pageNumber, offset) = CalculateIndices(index);
-        var page = GetOrLoadPage(pageNumber);
-
-        long stringOffset = _stringFileHandler.AppendString(value);
-        page.Data[offset] = stringOffset;
-        page.MarkAsModified(offset);
-
-        var bitmapBytes = ConvertBitArray(page.BitMap);
-        var dataBytes = SerializeData(page.Data);
-        _pageFileHandler.WritePage(page.AbsolutePageNumber, bitmapBytes, dataBytes);
-        page.Modified = false;
-    }
-
-    public void FlushModifiedPages()
-    {
-        foreach (var page in _pagesInMemory.Values.Where(p => p.Modified))
+        try
         {
+            var (pageNumber, offset) = CalculateIndices(index);
+            var page = GetOrLoadPage(pageNumber);
+
+            long stringOffset = _stringFileHandler.AppendString(value);
+            page.Data[offset] = stringOffset;
+            page.MarkAsModified(offset);
+
             var bitmapBytes = ConvertBitArray(page.BitMap);
             var dataBytes = SerializeData(page.Data);
             _pageFileHandler.WritePage(page.AbsolutePageNumber, bitmapBytes, dataBytes);
             page.Modified = false;
+        }
+        catch (IOException ex)
+        {
+            throw new IOException("Error writing element", ex);
+        }
+        catch (OutOfMemoryException ex)
+        {
+            throw new OutOfMemoryException("Insufficient memory to write element", ex);
+        }
+    }
+
+    public void FlushModifiedPages()
+    {
+        try
+        {
+            foreach (var page in _pagesInMemory.Values.Where(p => p.Modified))
+            {
+                var bitmapBytes = ConvertBitArray(page.BitMap);
+                var dataBytes = SerializeData(page.Data);
+                _pageFileHandler.WritePage(page.AbsolutePageNumber, bitmapBytes, dataBytes);
+                page.Modified = false;
+            }
+        }
+        catch (IOException ex)
+        {
+            throw new IOException("Error flushing modified pages", ex);
         }
     }
 
@@ -85,10 +128,21 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
 
     public void Dispose()
     {
-        FlushModifiedPages();
-        _pageFileHandler.Dispose();
-        _stringFileHandler.Dispose();
-        GC.SuppressFinalize(this);
+        try
+        {
+            FlushModifiedPages();
+            _pageFileHandler.Dispose();
+            _stringFileHandler.Dispose();
+        }
+        catch (IOException ex)
+        {
+            // Log the error, but don't throw, as Dispose should not throw
+            Console.Error.WriteLine($"Error during Dispose: {ex.Message}");
+        }
+        finally
+        {
+            GC.SuppressFinalize(this);
+        }
     }
 
     private (long pageNumber, int offset) CalculateIndices(long index)
@@ -142,6 +196,10 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
             _pagesInMemory[pageNumber] = page;
             return page;
         }
+        catch (IOException ex)
+        {
+            throw new IOException($"Failed to load page {pageNumber}", ex);
+        }
         catch (Exception ex)
         {
             throw new InvalidOperationException($"Failed to load page {pageNumber}", ex);
@@ -154,14 +212,21 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
             .OrderBy(p => p.LastAccessTime)
             .First();
 
-        if (pageToEvict.Modified)
+        try
         {
-            var bitmapBytes = ConvertBitArray(pageToEvict.BitMap);
-            var dataBytes = SerializeData(pageToEvict.Data);
-            _pageFileHandler.WritePage(pageToEvict.AbsolutePageNumber, bitmapBytes, dataBytes);
-        }
+            if (pageToEvict.Modified)
+            {
+                var bitmapBytes = ConvertBitArray(pageToEvict.BitMap);
+                var dataBytes = SerializeData(pageToEvict.Data);
+                _pageFileHandler.WritePage(pageToEvict.AbsolutePageNumber, bitmapBytes, dataBytes);
+            }
 
-        _pagesInMemory.Remove(pageToEvict.AbsolutePageNumber);
+            _pagesInMemory.Remove(pageToEvict.AbsolutePageNumber);
+        }
+        catch (IOException ex)
+        {
+            throw new IOException("Error evicting page", ex);
+        }
     }
 
     private static byte[] ConvertBitArray(BitArray bits)
@@ -194,5 +259,27 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
             result[i] = _addressSerializer.Deserialize(span);
         }
         return result;
+    }
+
+    private static void InitializeFile(IFileHandler fileHandler, int pageSize, int elementsPerPage)
+    {
+        // Calculate the number of pages needed (assuming a large number of elements)
+        long totalElements = 10000; // Example: 10000 elements
+        long totalSizeBytes = totalElements * sizeof(long); // Assuming long is the data type
+        long totalPages = (long)Math.Ceiling((double)totalSizeBytes / pageSize);
+
+        // Calculate the total file size needed
+        long totalFileSize = 2 + totalPages * pageSize; // 2 bytes for signature
+
+        // Create a buffer filled with zeros
+        byte[] zeroBuffer = new byte[pageSize];
+
+        // Write the signature
+        fileHandler.WritePage(0, new byte[0], new byte[0]); // Write signature
+        // Write zero-filled pages
+        for (int i = 1; i < totalPages; i++)
+        {
+            fileHandler.WritePage(i, new byte[0], zeroBuffer);
+        }
     }
 }
