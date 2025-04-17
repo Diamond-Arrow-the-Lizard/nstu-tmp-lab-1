@@ -37,13 +37,23 @@ public class FixedStringMemoryManager : IVirtualMemoryManager<string>
 
     public int BufferSize => _bufferSize;
 
-    private int CalculateElementsPerPage()
+private int CalculateElementsPerPage()
+{
+    int elementSize = _serializer.Size;
+
+    // Ищем максимальное количество элементов, чтобы bitmap + data влезли в страницу
+    for (int count = 1; count < 10000; count++)
     {
-        int elementSize = _serializer.Size;
-        int bitsPerElement = 1; // 1 бит на элемент в битовой карте
-        int totalBitsPerElement = (elementSize * 8) + bitsPerElement;
-        return (_pageSize * 8) / totalBitsPerElement;
+        int bitmapSize = (count + 7) / 8;
+        int dataSize = count * elementSize;
+
+        if (bitmapSize + dataSize > _pageSize)
+            return count - 1;
     }
+
+    throw new InvalidOperationException("Cannot fit any elements on page.");
+}
+
 
     public string ReadElement(long index)
     {
@@ -163,23 +173,35 @@ public class FixedStringMemoryManager : IVirtualMemoryManager<string>
 
     private byte[] SerializeData(string[] data)
     {
-        var buffer = new byte[data.Length * _serializer.Size];
-        for (int i = 0; i < data.Length; i++)
+        // The 'data' array passed in should ideally already have size _elementsPerPage
+        if (data.Length != _elementsPerPage)
         {
+            throw new ArgumentOutOfRangeException("Data size and the amount of elements per page don't match");
+        }
+
+        var buffer = new byte[_elementsPerPage * _serializer.Size];
+        for (int i = 0; i < _elementsPerPage; i++) // Loop up to _elementsPerPage
+        {
+            // Check if the input array has this element, handle nulls
+            string valueToSerialize = (i < data.Length && data[i] != null) ? data[i] : string.Empty;
+
             var span = new Span<byte>(buffer, i * _serializer.Size, _serializer.Size);
-            _serializer.Serialize(data[i] ?? string.Empty, span);
+            _serializer.Serialize(valueToSerialize, span);
         }
         return buffer;
     }
 
     private string[] DeserializeData(byte[] bytes)
     {
-        if (bytes.Length % _serializer.Size != 0)
-            throw new InvalidOperationException("Invalid data length for deserialization.");
+        int expectedDataSize = _elementsPerPage * _serializer.Size;
+        if (bytes.Length < expectedDataSize)
+            throw new InvalidOperationException($"Insufficient data for deserialization. Expected {expectedDataSize}, got {bytes.Length}.");
 
-        string[] result = new string[bytes.Length / _serializer.Size];
-        for (int i = 0; i < result.Length; i++)
+        // Create the result array based on elements per page
+        string[] result = new string[_elementsPerPage];
+        for (int i = 0; i < result.Length; i++) 
         {
+            // Ensure you only read the necessary part of the 'bytes' array
             var span = new ReadOnlySpan<byte>(bytes, i * _serializer.Size, _serializer.Size);
             result[i] = _serializer.Deserialize(span);
         }
