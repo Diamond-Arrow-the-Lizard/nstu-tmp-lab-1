@@ -1,5 +1,4 @@
-using System;
-using VirtualMemory.Interfaces;
+namespace VirtualMemory.Interfaces;
 
 public interface IFileHandler : IDisposable
 {

@@ -3,6 +3,7 @@ namespace VirtualMemory.Models;
 using System;
 using System.IO;
 using System.Text;
+using VirtualMemory.Interfaces;
 
 public class PageFileHandler : IFileHandler
 {
