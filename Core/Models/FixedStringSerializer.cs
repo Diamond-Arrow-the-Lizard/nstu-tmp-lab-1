@@ -15,7 +15,7 @@ public class FixedStringSerializer : ISerializer<string>
             throw new ArgumentException("Fixed length must be positive", nameof(fixedLength));
 
         _fixedLength = fixedLength;
-        _encoding = encoding ?? Encoding.ASCII; // По умолчанию ASCII
+        _encoding = encoding ?? Encoding.ASCII; 
     }
 
     public int Size => _fixedLength;
