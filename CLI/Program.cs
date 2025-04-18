@@ -1,5 +1,4 @@
-﻿using System;
-using VirtualMemory.Interfaces;
+﻿using VirtualMemory.Interfaces;
 using VirtualMemory.Models;
 
 namespace VirtualMemory.CLI
@@ -8,6 +7,7 @@ namespace VirtualMemory.CLI
     {
         private static IVirtualMemoryManager<int>? _intManager;
         private static IVirtualMemoryManager<string>? _fixedStringManager;
+        private static IVirtualMemoryManager<string>? _varStringManager; 
         private static bool _isRunning = true;
 
         public static void Main()
@@ -56,6 +56,7 @@ namespace VirtualMemory.CLI
                     _isRunning = false;
                     _intManager?.Dispose();
                     _fixedStringManager?.Dispose();
+                    _varStringManager?.Dispose(); // And this line
                     Console.WriteLine("Exiting...");
                     break;
 
@@ -85,6 +86,7 @@ namespace VirtualMemory.CLI
                     filename: filename
                 );
                 _fixedStringManager = null;
+                _varStringManager = null; // And this
                 Console.WriteLine($"Integer array file '{filename}' created.");
             }
             else if (typeSpec.StartsWith("char(") && typeSpec.EndsWith(")"))
@@ -96,11 +98,25 @@ namespace VirtualMemory.CLI
                     stringLength: length
                 );
                 _intManager = null;
+                _varStringManager = null; // And this
                 Console.WriteLine($"Fixed-length string array (length={length}) file '{filename}' created.");
+            }
+            else if (typeSpec.StartsWith("varchar(") && typeSpec.EndsWith(")")) // Add this block
+            {
+                int maxLength = int.Parse(typeSpec[8..^1]);
+                _varStringManager = new VarCharMemoryManager(
+                    bufferSize: 3,
+                    pageFileName: $"{filename}_pages", // Separate file for pages
+                    stringFileName: $"{filename}_strings", // Separate file for strings
+                    maxStringLength: maxLength
+                );
+                _intManager = null;
+                _fixedStringManager = null;
+                Console.WriteLine($"Variable-length string array (max length={maxLength}) files '{filename}_pages' and '{filename}_strings' created.");
             }
             else
             {
-                throw new ArgumentException("Invalid type. Use 'int' or 'char(length)'");
+                throw new ArgumentException("Invalid type. Use 'int', 'char(length)', or 'varchar(maxLength)'");
             }
         }
 
@@ -108,7 +124,7 @@ namespace VirtualMemory.CLI
         {
             try
             {
-                if (_intManager == null && _fixedStringManager == null)
+                if (_intManager == null && _fixedStringManager == null && _varStringManager == null) // Modify this condition
                     throw new InvalidOperationException("No virtual memory file opened. Use 'create' first.");
 
                 if (parts.Length < 3)
@@ -134,7 +150,15 @@ namespace VirtualMemory.CLI
                     _fixedStringManager.FlushModifiedPages();
                     Console.WriteLine($"Written string \"{value}\" at index {index}.");
                 }
-
+                else if (_varStringManager != null) // Add this block
+                {
+                    string value = parts[2];
+                    if (value.StartsWith('"') && value.EndsWith('"'))
+                        value = value[1..^1];
+                    _varStringManager.WriteElement(index, value);
+                    _varStringManager.FlushModifiedPages();
+                    Console.WriteLine($"Written string \"{value}\" at index {index}.");
+                }
             }
             catch (Exception ex)
             {
@@ -146,7 +170,7 @@ namespace VirtualMemory.CLI
 
         private static void HandlePrintCommand(string[] parts)
         {
-            if (_intManager == null && _fixedStringManager == null)
+            if (_intManager == null && _fixedStringManager == null && _varStringManager == null) // Modify this condition
                 throw new InvalidOperationException("No virtual memory file opened. Use 'create' first.");
 
             if (parts.Length < 2)
@@ -165,6 +189,11 @@ namespace VirtualMemory.CLI
                 var value = _fixedStringManager.ReadElement(index);
                 Console.WriteLine($"Value at index {index}: \"{value}\" (string)");
             }
+            else if (_varStringManager != null) // Add this block
+            {
+                var value = _varStringManager.ReadElement(index);
+                Console.WriteLine($"Value at index {index}: \"{value}\" (varchar)");
+            }
         }
 
         private static void PrintHelp()
@@ -172,6 +201,7 @@ namespace VirtualMemory.CLI
             Console.WriteLine("Available commands:");
             Console.WriteLine("  create <filename> int - Create integer array");
             Console.WriteLine("  create <filename> char(<length>) - Create fixed-length string array");
+            Console.WriteLine("  create <filename> varchar(<maxLength>) - Create variable-length string array"); // Add this line
             Console.WriteLine("  input <index> <value> - Write value at index (strings in quotes)");
             Console.WriteLine("  print <index> - Read value at index");
             Console.WriteLine("  exit - Close the program");

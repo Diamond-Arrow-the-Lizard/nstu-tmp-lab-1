@@ -1,16 +1,12 @@
-namespace VirtualMemory.Models;
-
-using System;
 using System.Collections;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using VirtualMemory.Interfaces;
+
+namespace VirtualMemory.Models;
 
 public class VarCharMemoryManager : IVirtualMemoryManager<string>
 {
     private const int DefaultPageSize = 512;
-    private const int AddressesPerPage = 128; // Количество адресов на странице
+    private const int AddressesPerPage = 128; 
     private readonly int _pageSize = DefaultPageSize;
     private readonly int _bufferSize;
     private readonly ISerializer<long> _addressSerializer = new VarCharSerializer();
@@ -20,6 +16,7 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
     private readonly string _pageFileName;
     private readonly string _stringFileName;
     private readonly long _maxStringLength;
+    private readonly int _bitmapSize; 
 
     public VarCharMemoryManager(int bufferSize, string pageFileName, string stringFileName, long maxStringLength)
     {
@@ -32,12 +29,13 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         _pageFileName = pageFileName;
         _stringFileName = stringFileName;
         _maxStringLength = maxStringLength;
+        _bitmapSize = (AddressesPerPage + 7) / 8; 
 
         try
         {
             _pageFileHandler = new PageFileHandler(_pageSize, AddressesPerPage);
             _pageFileHandler.CreateOrOpen(_pageFileName);
-            InitializeFile(_pageFileHandler, _pageSize, AddressesPerPage); // Заполняем нулями
+            InitializeFile(_pageFileHandler, _pageSize, AddressesPerPage, _bitmapSize); 
 
             _stringFileHandler.CreateOrOpen(_stringFileName);
         }
@@ -136,7 +134,6 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         }
         catch (IOException ex)
         {
-            // Log the error, but don't throw, as Dispose should not throw
             Console.Error.WriteLine($"Error during Dispose: {ex.Message}");
         }
         finally
@@ -152,6 +149,10 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
 
         long pageNumber = index / AddressesPerPage;
         int offset = (int)(index % AddressesPerPage);
+
+        if (offset < 0 || offset >= AddressesPerPage)
+            throw new IndexOutOfRangeException("Offset is out of page bounds.");
+
         return (pageNumber, offset);
     }
 
@@ -193,6 +194,11 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
                 Data = new long[AddressesPerPage],
                 LastAccessTime = DateTime.UtcNow
             };
+
+            var bitmapBytes = ConvertBitArray(page.BitMap);
+            var dataBytes = SerializeData(page.Data);
+            _pageFileHandler.WritePage(pageNumber, bitmapBytes, dataBytes);
+
             _pagesInMemory[pageNumber] = page;
             return page;
         }
@@ -261,25 +267,10 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         return result;
     }
 
-    private static void InitializeFile(IFileHandler fileHandler, int pageSize, int elementsPerPage)
+    private void InitializeFile(IFileHandler fileHandler, int pageSize, int elementsPerPage, int bitmapSize)
     {
-        // Calculate the number of pages needed (assuming a large number of elements)
-        long totalElements = 10000; // Example: 10000 elements
-        long totalSizeBytes = totalElements * sizeof(long); // Assuming long is the data type
-        long totalPages = (long)Math.Ceiling((double)totalSizeBytes / pageSize);
-
-        // Calculate the total file size needed
-        long totalFileSize = 2 + totalPages * pageSize; // 2 bytes for signature
-
-        // Create a buffer filled with zeros
-        byte[] zeroBuffer = new byte[pageSize];
-
-        // Write the signature
-        fileHandler.WritePage(0, new byte[0], new byte[0]); // Write signature
-        // Write zero-filled pages
-        for (int i = 1; i < totalPages; i++)
-        {
-            fileHandler.WritePage(i, new byte[0], zeroBuffer);
-        }
+        byte[] zeroBitmap = new byte[bitmapSize];
+        byte[] zeroData = new byte[pageSize - bitmapSize]; 
+        
     }
 }
