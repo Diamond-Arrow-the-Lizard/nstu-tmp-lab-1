@@ -1,13 +1,12 @@
 using System.Collections;
 using VirtualMemory.Interfaces;
+using System.Linq; 
 
 namespace VirtualMemory.Models;
 
 public class VarCharMemoryManager : IVirtualMemoryManager<string>
 {
-    private const int DefaultPageSize = 512;
-    private const int AddressesPerPage = 128; 
-    private readonly int _pageSize = DefaultPageSize;
+    private const int AddressesPerPage = 128;
     private readonly int _bufferSize;
     private readonly ISerializer<long> _addressSerializer = new VarCharSerializer();
     private readonly VarCharFileHandler _stringFileHandler = new();
@@ -16,7 +15,6 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
     private readonly string _pageFileName;
     private readonly string _stringFileName;
     private readonly long _maxStringLength;
-    private readonly int _bitmapSize; 
 
     public VarCharMemoryManager(int bufferSize, string pageFileName, string stringFileName, long maxStringLength)
     {
@@ -29,13 +27,12 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         _pageFileName = pageFileName;
         _stringFileName = stringFileName;
         _maxStringLength = maxStringLength;
-        _bitmapSize = (AddressesPerPage + 7) / 8; 
 
         try
         {
-            _pageFileHandler = new PageFileHandler(_pageSize, AddressesPerPage);
+            _pageFileHandler = new PageFileHandler(AddressesPerPage, _addressSerializer.Size);
             _pageFileHandler.CreateOrOpen(_pageFileName);
-            InitializeFile(_pageFileHandler, _pageSize, AddressesPerPage, _bitmapSize); 
+
 
             _stringFileHandler.CreateOrOpen(_stringFileName);
         }
@@ -71,6 +68,14 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         {
             throw new IOException("Error reading element", ex);
         }
+         catch (IndexOutOfRangeException ex) 
+        {
+            throw new IndexOutOfRangeException($"Index {index} is out of bounds.", ex);
+        }
+         catch (Exception ex)
+        {
+             throw new InvalidOperationException($"An unexpected error occurred while reading element {index}.", ex);
+        }
     }
 
     public void WriteElement(long index, string value)
@@ -89,10 +94,6 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
             page.Data[offset] = stringOffset;
             page.MarkAsModified(offset);
 
-            var bitmapBytes = ConvertBitArray(page.BitMap);
-            var dataBytes = SerializeData(page.Data);
-            _pageFileHandler.WritePage(page.AbsolutePageNumber, bitmapBytes, dataBytes);
-            page.Modified = false;
         }
         catch (IOException ex)
         {
@@ -102,13 +103,21 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         {
             throw new OutOfMemoryException("Insufficient memory to write element", ex);
         }
+         catch (IndexOutOfRangeException ex) 
+        {
+            throw new IndexOutOfRangeException($"Index {index} is out of bounds.", ex);
+        }
+         catch (Exception ex)
+        {
+             throw new InvalidOperationException($"An unexpected error occurred while writing element {index}.", ex);
+        }
     }
 
     public void FlushModifiedPages()
     {
         try
         {
-            foreach (var page in _pagesInMemory.Values.Where(p => p.Modified))
+            foreach (var page in _pagesInMemory.Values.Where(p => p.Modified).ToList()) 
             {
                 var bitmapBytes = ConvertBitArray(page.BitMap);
                 var dataBytes = SerializeData(page.Data);
@@ -151,7 +160,8 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         int offset = (int)(index % AddressesPerPage);
 
         if (offset < 0 || offset >= AddressesPerPage)
-            throw new IndexOutOfRangeException("Offset is out of page bounds.");
+             throw new IndexOutOfRangeException($"Calculated offset {offset} is out of page bounds (0-{AddressesPerPage - 1}).");
+
 
         return (pageNumber, offset);
     }
@@ -175,13 +185,19 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
         try
         {
             var (bitmapBytes, dataBytes) = _pageFileHandler.ReadPage(pageNumber);
-            var page = new Page<long>(AddressesPerPage)
+            var page = new Page<long>(AddressesPerPage) 
             {
                 AbsolutePageNumber = pageNumber,
-                BitMap = new BitArray(bitmapBytes),
-                Data = DeserializeData(dataBytes),
+                BitMap = new BitArray(bitmapBytes), 
+                Data = DeserializeData(dataBytes), 
                 LastAccessTime = DateTime.UtcNow
             };
+
+            if (page.BitMap.Length != AddressesPerPage || page.Data.Length != AddressesPerPage)
+            {
+                 throw new InvalidOperationException($"Loaded page {pageNumber} has incorrect dimensions.");
+            }
+
             _pagesInMemory[pageNumber] = page;
             return page;
         }
@@ -194,10 +210,6 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
                 Data = new long[AddressesPerPage],
                 LastAccessTime = DateTime.UtcNow
             };
-
-            var bitmapBytes = ConvertBitArray(page.BitMap);
-            var dataBytes = SerializeData(page.Data);
-            _pageFileHandler.WritePage(pageNumber, bitmapBytes, dataBytes);
 
             _pagesInMemory[pageNumber] = page;
             return page;
@@ -214,17 +226,20 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
 
     private void EvictPage()
     {
+        // Find the least recently used page
         var pageToEvict = _pagesInMemory.Values
             .OrderBy(p => p.LastAccessTime)
             .First();
 
         try
         {
+            // Only write back if modified
             if (pageToEvict.Modified)
             {
                 var bitmapBytes = ConvertBitArray(pageToEvict.BitMap);
                 var dataBytes = SerializeData(pageToEvict.Data);
                 _pageFileHandler.WritePage(pageToEvict.AbsolutePageNumber, bitmapBytes, dataBytes);
+                pageToEvict.Modified = false; // Reset modified flag after flushing
             }
 
             _pagesInMemory.Remove(pageToEvict.AbsolutePageNumber);
@@ -255,22 +270,17 @@ public class VarCharMemoryManager : IVirtualMemoryManager<string>
 
     private long[] DeserializeData(byte[] bytes)
     {
-        if (bytes.Length % _addressSerializer.Size != 0)
-            throw new InvalidOperationException("Invalid data length for deserialization.");
+        int expectedSize = AddressesPerPage * _addressSerializer.Size;
+        if (bytes.Length != expectedSize)
+             throw new InvalidOperationException($"Invalid data length for deserialization. Expected {expectedSize}, got {bytes.Length}.");
 
-        long[] result = new long[bytes.Length / _addressSerializer.Size];
+
+        long[] result = new long[AddressesPerPage]; 
         for (int i = 0; i < result.Length; i++)
         {
             var span = new ReadOnlySpan<byte>(bytes, i * _addressSerializer.Size, _addressSerializer.Size);
             result[i] = _addressSerializer.Deserialize(span);
         }
         return result;
-    }
-
-    private void InitializeFile(IFileHandler fileHandler, int pageSize, int elementsPerPage, int bitmapSize)
-    {
-        byte[] zeroBitmap = new byte[bitmapSize];
-        byte[] zeroData = new byte[pageSize - bitmapSize]; 
-        
     }
 }

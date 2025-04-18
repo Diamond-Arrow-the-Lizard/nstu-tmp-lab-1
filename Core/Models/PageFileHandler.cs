@@ -9,19 +9,30 @@ public class PageFileHandler : IFileHandler
 {
     private const string Signature = "VM";
     private FileStream? _fileStream;
-    private readonly int _pageSize;
+    private readonly int _pageSize; 
     private readonly int _elementsPerPage;
+    private readonly int _elementSize; 
+    private readonly int _calculatedBitmapSize;
+    private readonly int _calculatedPageDataSize;
     private bool _disposed;
 
-    public PageFileHandler(int pageSize, int elementsPerPage)
+    public PageFileHandler(int elementsPerPage, int elementSize)
     {
-        if (pageSize <= 0)
-            throw new ArgumentException("Page size must be positive", nameof(pageSize));
         if (elementsPerPage <= 0)
             throw new ArgumentException("Elements per page must be positive", nameof(elementsPerPage));
+        if (elementSize <= 0)
+            throw new ArgumentException("Element size must be positive", nameof(elementSize));
 
-        _pageSize = pageSize;
         _elementsPerPage = elementsPerPage;
+        _elementSize = elementSize;
+
+        _calculatedBitmapSize = (_elementsPerPage + 7) / 8;
+        _calculatedPageDataSize = _elementsPerPage * _elementSize;
+
+        _pageSize = _calculatedBitmapSize + _calculatedPageDataSize;
+
+        if (_pageSize <= 0)
+             throw new InvalidOperationException("Calculated page size must be positive.");
     }
 
     public void CreateOrOpen(string filename)
@@ -45,13 +56,15 @@ public class PageFileHandler : IFileHandler
             {
                 var signature = Encoding.ASCII.GetBytes(Signature);
                 _fileStream.Write(signature, 0, signature.Length);
-                _fileStream.SetLength(_pageSize);
 
+                // Initialize the first page with zeros based on the calculated page size
+                _fileStream.SetLength(2 + _pageSize); // Signature + one page
                 var zeroBuffer = new byte[_pageSize];
                 _fileStream.Write(zeroBuffer, 0, zeroBuffer.Length);
             }
             else
             {
+                // Validate signature for existing files
                 var buffer = new byte[2];
                 if (_fileStream.Read(buffer, 0, 2) != 2 ||
                     Encoding.ASCII.GetString(buffer) != Signature)
@@ -74,32 +87,32 @@ public class PageFileHandler : IFileHandler
         if (_fileStream == null)
             throw new InvalidOperationException("File not opened");
 
-        var offset = 2 + pageNumber * _pageSize;
-        long requiredLength = offset + _pageSize;
-
-        // Check if the file is long enough to contain this page
+        var offset = 2 + pageNumber * _pageSize; 
+        long requiredLength = offset + _pageSize;         
         if (_fileStream.Length < requiredLength)
-            throw new ArgumentOutOfRangeException(nameof(pageNumber), $"Page {pageNumber} exceeds file length. File length: {_fileStream.Length}, Required: {requiredLength}");
+        {
+            // Ensure the returned data array matches the expected size
+             return (new byte[_calculatedBitmapSize], new byte[_calculatedPageDataSize]);
+        }
 
         _fileStream.Seek(offset, SeekOrigin.Begin);
 
-        int bitmapSize = (_elementsPerPage + 7) / 8;
-        var bitmap = new byte[bitmapSize];
-        int bytesRead = _fileStream.Read(bitmap, 0, bitmapSize);
-        if (bytesRead != bitmapSize)
-            throw new IOException($"Failed to read full bitmap for page {pageNumber}. Expected {bitmapSize}, got {bytesRead}.");
+        var bitmap = new byte[_calculatedBitmapSize];
+        int bytesReadBitmap = _fileStream.Read(bitmap, 0, _calculatedBitmapSize);
+        if (bytesReadBitmap != _calculatedBitmapSize)
+             throw new IOException($"Failed to read full bitmap for page {pageNumber}. Expected {_calculatedBitmapSize}, got {bytesReadBitmap}.");
 
-        // Read the REMAINDER of the page as data
-        int dataSizeToRead = _pageSize - bitmapSize;
-        var data = new byte[dataSizeToRead];
-        bytesRead = _fileStream.Read(data, 0, dataSizeToRead);
-        if (bytesRead != dataSizeToRead)
-            throw new IOException($"Failed to read full page data for page {pageNumber}. Expected {dataSizeToRead}, got {bytesRead}.");
 
-        return (bitmap, data); 
+        var data = new byte[_calculatedPageDataSize];
+        int bytesReadData = _fileStream.Read(data, 0, _calculatedPageDataSize);
+         if (bytesReadData != _calculatedPageDataSize)
+            throw new IOException($"Failed to read full page data for page {pageNumber}. Expected {_calculatedPageDataSize}, got {bytesReadData}.");
+
+
+        return (bitmap, data);
     }
 
-    public void WritePage(long pageNumber, byte[] bitmap, byte[] data) 
+    public void WritePage(long pageNumber, byte[] bitmap, byte[] data)
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(PageFileHandler));
@@ -108,41 +121,23 @@ public class PageFileHandler : IFileHandler
         if (bitmap == null || data == null)
             throw new ArgumentNullException();
 
-        int expectedBitmapSize = (_elementsPerPage + 7) / 8;
-        int actualDataSize = data.Length;
+        if (bitmap.Length != _calculatedBitmapSize)
+             throw new ArgumentException($"Invalid bitmap size. Expected {_calculatedBitmapSize}, got {bitmap.Length}.");
+        if (data.Length != _calculatedPageDataSize)
+             throw new ArgumentException($"Invalid data size. Expected {_calculatedPageDataSize}, got {data.Length}.");
 
-        // Validate the bitmap size ONLY
-        if (bitmap.Length != expectedBitmapSize)
-            throw new ArgumentException($"Invalid bitmap size. Expected {expectedBitmapSize}, got {bitmap.Length}.");
 
-        // Calculate padding size
-        int paddingSize = _pageSize - bitmap.Length - actualDataSize;
-        if (paddingSize < 0)
-        {
-            // This implies SerializeData returned more bytes than fit in the page data area
-            throw new ArgumentException($"Data size ({actualDataSize}) + bitmap size ({bitmap.Length}) exceeds page size ({_pageSize}).");
-        }
+        var offset = 2 + pageNumber * _pageSize; 
+        long requiredLength = offset + _pageSize;         
 
-        var offset = 2 + pageNumber * _pageSize;
-        long requiredLength = offset + _pageSize;
-
-        // Ensure file is long enough
         if (_fileStream.Length < requiredLength)
         {
             _fileStream.SetLength(requiredLength);
         }
 
         _fileStream.Seek(offset, SeekOrigin.Begin);
-        _fileStream.Write(bitmap, 0, bitmap.Length); 
-        _fileStream.Write(data, 0, actualDataSize);  
-
-        // Write padding if necessary to fill the page size
-        if (paddingSize > 0)
-        {
-            // Consider pre-allocating a zero buffer if performance is critical
-            var padding = new byte[paddingSize];
-            _fileStream.Write(padding, 0, paddingSize);
-        }
+        _fileStream.Write(bitmap, 0, bitmap.Length);
+        _fileStream.Write(data, 0, data.Length);
 
         _fileStream.Flush(); // Ensure data is written to disk
     }

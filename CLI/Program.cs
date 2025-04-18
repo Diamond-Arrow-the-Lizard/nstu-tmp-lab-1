@@ -56,7 +56,7 @@ namespace VirtualMemory.CLI
                     _isRunning = false;
                     _intManager?.Dispose();
                     _fixedStringManager?.Dispose();
-                    _varStringManager?.Dispose(); // And this line
+                    _varStringManager?.Dispose(); 
                     Console.WriteLine("Exiting...");
                     break;
 
@@ -86,7 +86,7 @@ namespace VirtualMemory.CLI
                     filename: filename
                 );
                 _fixedStringManager = null;
-                _varStringManager = null; // And this
+                _varStringManager = null; 
                 Console.WriteLine($"Integer array file '{filename}' created.");
             }
             else if (typeSpec.StartsWith("char(") && typeSpec.EndsWith(")"))
@@ -98,10 +98,10 @@ namespace VirtualMemory.CLI
                     stringLength: length
                 );
                 _intManager = null;
-                _varStringManager = null; // And this
+                _varStringManager = null; 
                 Console.WriteLine($"Fixed-length string array (length={length}) file '{filename}' created.");
             }
-            else if (typeSpec.StartsWith("varchar(") && typeSpec.EndsWith(")")) // Add this block
+            else if (typeSpec.StartsWith("varchar(") && typeSpec.EndsWith(")"))  
             {
                 int maxLength = int.Parse(typeSpec[8..^1]);
                 _varStringManager = new VarCharMemoryManager(
@@ -124,7 +124,7 @@ namespace VirtualMemory.CLI
         {
             try
             {
-                if (_intManager == null && _fixedStringManager == null && _varStringManager == null) // Modify this condition
+                if (_intManager == null && _fixedStringManager == null && _varStringManager == null) 
                     throw new InvalidOperationException("No virtual memory file opened. Use 'create' first.");
 
                 if (parts.Length < 3)
@@ -150,7 +150,7 @@ namespace VirtualMemory.CLI
                     _fixedStringManager.FlushModifiedPages();
                     Console.WriteLine($"Written string \"{value}\" at index {index}.");
                 }
-                else if (_varStringManager != null) // Add this block
+                else if (_varStringManager != null)  
                 {
                     string value = parts[2];
                     if (value.StartsWith('"') && value.EndsWith('"'))
@@ -170,7 +170,7 @@ namespace VirtualMemory.CLI
 
         private static void HandlePrintCommand(string[] parts)
         {
-            if (_intManager == null && _fixedStringManager == null && _varStringManager == null) // Modify this condition
+            if (_intManager == null && _fixedStringManager == null && _varStringManager == null) 
                 throw new InvalidOperationException("No virtual memory file opened. Use 'create' first.");
 
             if (parts.Length < 2)
@@ -189,7 +189,7 @@ namespace VirtualMemory.CLI
                 var value = _fixedStringManager.ReadElement(index);
                 Console.WriteLine($"Value at index {index}: \"{value}\" (string)");
             }
-            else if (_varStringManager != null) // Add this block
+            else if (_varStringManager != null)  
             {
                 var value = _varStringManager.ReadElement(index);
                 Console.WriteLine($"Value at index {index}: \"{value}\" (varchar)");
@@ -201,7 +201,7 @@ namespace VirtualMemory.CLI
             Console.WriteLine("Available commands:");
             Console.WriteLine("  create <filename> int - Create integer array");
             Console.WriteLine("  create <filename> char(<length>) - Create fixed-length string array");
-            Console.WriteLine("  create <filename> varchar(<maxLength>) - Create variable-length string array"); // Add this line
+            Console.WriteLine("  create <filename> varchar(<maxLength>) - Create variable-length string array"); 
             Console.WriteLine("  input <index> <value> - Write value at index (strings in quotes)");
             Console.WriteLine("  print <index> - Read value at index");
             Console.WriteLine("  exit - Close the program");
